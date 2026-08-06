@@ -1,0 +1,60 @@
+name: Azure Infra + App CI/CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+jobs:
+  terraform:
+    name: "Terraform Apply"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    outputs:
+      vm_ip: ${{ steps.tf_output.outputs.vm_ip }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: terraform plan -var-file=environments/dev.tfvars
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -var-file=environments/dev.tfvars
+
+      - name: Get VM IP
+        id: tf_output
+        run: echo "vm_ip=$(terraform output -raw vm_public_ip)" >> $GITHUB_OUTPUT
+
+  deploy-app:
+    name: "Deploy App to VM"
+    needs: terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ needs.terraform.outputs.vm_ip }}
+          username: azureuser
+          password: ${{ secrets.VM_PASSWORD }}
+          script: |
+            sudo apt update -y
+            sudo apt install -y nginx
+            sudo systemctl restart nginx
